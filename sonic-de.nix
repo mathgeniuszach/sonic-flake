@@ -223,11 +223,30 @@ in
       ++ lib.optional config.services.pipewire.pulse.enable Sonic-DE.sonic-audio-applet-pulse #plasma-pa
       # nixpkgs powerdevil is built against libkscreen 6.8+, which dropped X11
       # DPMS support and segfaults on the plasmax11 session; link it against
-      # sonic's libkscreen fork instead.
+      # sonic's libkscreen fork instead. Filtering propagatedBuildInputs is not
+      # enough: plasma-workspace (for libkworkspace6) re-imports nixpkgs
+      # libkscreen through its cmake/RPATH chain, so also put sonic's first in
+      # the CMake search path and swap any remaining nixpkgs libkscreen out of
+      # the runtime RPATH.
       ++ lib.optional config.powerManagement.enable (powerdevil.overrideAttrs (old: {
         propagatedBuildInputs =
           builtins.filter (p: !lib.hasInfix "libkscreen" (p.outPath or (toString p))) (old.propagatedBuildInputs or [ ])
           ++ [ Sonic-DE.sonic-screen-library.dev ];
+        preConfigure = ''
+          export CMAKE_PREFIX_PATH="${Sonic-DE.sonic-screen-library.dev}''${CMAKE_PREFIX_PATH:+:''${CMAKE_PREFIX_PATH}}"
+        '';
+        postFixup = ''
+          patchelfBin="${pkgs.patchelf}/bin/patchelf"
+          sonicLib="${lib.getLib Sonic-DE.sonic-screen-library}/lib"
+          while IFS= read -r f; do
+            rpath="$($patchelfBin --print-rpath "$f" 2>/dev/null)" || continue
+            case "$rpath" in
+              *libkscreen-6*/lib*)
+                $patchelfBin --set-rpath "$(printf '%s' "$rpath" | sed "s|[^:]*libkscreen-6[^:]*/lib|$sonicLib|g")" "$f"
+                ;;
+            esac
+          done < <(find "$out" -type f)
+        '';
       }))
       ++ lib.optional config.services.printing.enable print-manager
       ++ lib.optional config.hardware.sane.enable skanpage
