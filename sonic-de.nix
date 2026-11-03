@@ -93,7 +93,7 @@ in
           kiconthemes # provides Qt plugins
           kimageformats # provides Qt plugins
           qtimageformats # provides optional image formats such as .webp and .avif
-          Sonic-DE.sonic-frameworks-io #kio # provides helper service + a bunch of other stuff
+          kio # provides helper service + a bunch of other stuff
           kio-admin # managing files as admin
           kio-extras # stuff for MTP, AFC, etc
           kio-fuse # fuse interface for KIO
@@ -221,7 +221,14 @@ in
       ++ lib.optional config.networking.networkmanager.enable Sonic-DE.sonic-network-manager #plasma-nm
       ++ lib.optional config.services.pulseaudio.enable Sonic-DE.sonic-audio-applet-pulse #plasma-pa
       ++ lib.optional config.services.pipewire.pulse.enable Sonic-DE.sonic-audio-applet-pulse #plasma-pa
-      ++ lib.optional config.powerManagement.enable powerdevil
+      # nixpkgs powerdevil is built against libkscreen 6.8+, which dropped X11
+      # DPMS support and segfaults on the plasmax11 session; link it against
+      # sonic's libkscreen fork instead.
+      ++ lib.optional config.powerManagement.enable (powerdevil.overrideAttrs (old: {
+        propagatedBuildInputs =
+          builtins.filter (p: !lib.hasInfix "libkscreen" (p.outPath or (toString p))) (old.propagatedBuildInputs or [ ])
+          ++ [ Sonic-DE.sonic-screen-library.dev ];
+      }))
       ++ lib.optional config.services.printing.enable print-manager
       ++ lib.optional config.hardware.sane.enable skanpage
       ++ lib.optional config.services.colord.enable colord-kde

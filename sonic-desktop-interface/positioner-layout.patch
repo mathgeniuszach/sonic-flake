@@ -1,0 +1,101 @@
+--- a/containments/desktop/plugins/folder/positioner.cpp
++++ b/containments/desktop/plugins/folder/positioner.cpp
+@@ -657,19 +657,11 @@
+ 
+ void Positioner::sourceModelReset()
+ {
+-    qDebug() << this << "diag sourceModelReset: m_sourceToProxy(before)=" << m_sourceToProxy;
+     if (m_enabled) {
+         initMaps();
+     }
+ 
+     endResetModel();
+-
+-    if (screenInUse()) {
+-        m_positions.clear();
+-        m_changedPositions.clear();
+-        updatePositionsList();
+-        qDebug() << this << "diag sourceModelReset: cleared and rebuilt" << m_positions.size();
+-    }
+ }
+ 
+ void Positioner::sourceRowsAboutToBeInserted(const QModelIndex &parent, int start, int end)
+@@ -898,77 +890,12 @@
+ {
+     Q_UNUSED(parents)
+ 
+-    qDebug() << this << "diag sourceLayoutChanged: m_enabled=" << m_enabled << "sortMode=" << (m_folderModel ? m_folderModel->sortMode() : -1)
+-             << "rowCount=" << (m_folderModel ? m_folderModel->rowCount() : 0) << "m_preLayoutRowCount=" << m_preLayoutRowCount
+-             << "m_sourceToProxy.isEmpty=" << m_sourceToProxy.isEmpty() << "m_preLayoutUrlToProxy=" << m_preLayoutUrlToProxy
+-             << "m_sourceToProxy(before)=" << m_sourceToProxy;
+-
+     // Only reinitialize maps when in sorted mode. In unsorted mode, we want to preserve
+     // manual icon positions even after layout changes (e.g., after drag and drop).
+     if (m_enabled && m_folderModel->sortMode() != -1) {
+-        // Rebuild the positioner maps by translating user-applied proxy arrangements
+-        // through file URLs rather than rebuilding from raw KDirModel source rows.
+-        // This preserves manual moves/swaps (e.g. via tst_move/tst_proxyMapping) when
+-        // a layout change (e.g. a sort, a delayed screenMappingChanged-driven filter
+-        // re-evaluation) causes KDirModel to reorder its rows.
+-        const int newRowCount = m_folderModel->rowCount();
+-        qDebug() << this << "diag sourceLayoutChanged: rebuild-from-URL: newRowCount=" << newRowCount << "hadUserMapping=" << !m_preLayoutUrlToProxy.isEmpty();
+-
+-        m_proxyToSource.clear();
+-        m_sourceToProxy.clear();
+-
+-        if (m_preLayoutUrlToProxy.isEmpty()) {
+-            // No previous mapping to preserve (or no URLs were resolvable in the
+-            // pre-layout snapshot) - rebuild as identity over the new KDirModel rows.
+-            for (int i = 0; i < newRowCount; ++i) {
+-                updateMaps(i, i);
+-            }
+-        } else {
+-            // First pass: place items whose URL was in the pre-layout snapshot at
+-            // their remembered proxy, so that user-applied moves/swaps survive.
+-            QSet<int> usedProxies;
+-            QHash<int, int> newProxyToSource;
+-            QSet<QString> seenUrls;
+-            for (int newRow = 0; newRow < newRowCount; ++newRow) {
+-                const QUrl url = m_folderModel->data(m_folderModel->index(newRow, 0), FolderModel::UrlRole).toUrl();
+-                const QString urlStr = url.toString();
+-                if (urlStr.isEmpty() || seenUrls.contains(urlStr)) {
+-                    continue;
+-                }
+-                seenUrls.insert(urlStr);
+-                if (m_preLayoutUrlToProxy.contains(urlStr)) {
+-                    const int rememberedProxy = m_preLayoutUrlToProxy.value(urlStr);
+-                    newProxyToSource.insert(rememberedProxy, newRow);
+-                    m_sourceToProxy.insert(newRow, rememberedProxy);
+-                    usedProxies.insert(rememberedProxy);
+-                }
+-            }
+-            // Second pass: items not in the snapshot (genuinely new items) get the
+-            // first free proxy slot, in the order they appear in the new model.
+-            int nextFreeProxy = 0;
+-            for (int newRow = 0; newRow < newRowCount; ++newRow) {
+-                if (m_sourceToProxy.contains(newRow)) {
+-                    continue;
+-                }
+-                while (usedProxies.contains(nextFreeProxy)) {
+-                    ++nextFreeProxy;
+-                }
+-                newProxyToSource.insert(nextFreeProxy, newRow);
+-                m_sourceToProxy.insert(newRow, nextFreeProxy);
+-                usedProxies.insert(nextFreeProxy);
+-                ++nextFreeProxy;
+-            }
+-            m_proxyToSource = std::move(newProxyToSource);
+-        }
++        initMaps();
+     }
+ 
+-    // The pre-layout snapshot has been consumed; clear it so a subsequent
+-    // layoutAboutToBeChanged takes a fresh one.
+-    m_preLayoutUrlToProxy.clear();
+-
+-    qDebug() << this << "diag sourceLayoutChanged: AFTER if-block: m_enabled=" << m_enabled << "sortMode=" << (m_folderModel ? m_folderModel->sortMode() : -1)
+-             << "m_sourceToProxy(after)=" << m_sourceToProxy << "m_proxyToSource(after)=" << m_proxyToSource;
+-
+     Q_EMIT layoutChanged(QList<QPersistentModelIndex>(), hint);
+ }
+ 
