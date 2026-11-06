@@ -1,6 +1,82 @@
+# Sonic-desktop-interface positioner fixes on top of the 6.7.1.1 snapshot,
+# covering both halves of the icon-position-preservation problem:
+#
+# 1. Revert the fork's custom layout-change handling to upstream:
+#    - sourceModelReset: drop the m_positions/m_changedPositions clear and
+#      rebuild (a model reset is not a reason to forget remembered slots).
+#    - sourceLayoutChanged: drop the custom rebuild-from-URL (the
+#      m_preLayoutUrlToProxy snapshot translation); it mangles ~12 icon
+#      positions on every rename/delete. Upstream behavior: initMaps() in
+#      sorted mode, nothing in unsorted mode.
+#
+# 2. Port Sonic-DE upstream's create fix, 44d3eda84c "desktop positioner:
+#    don't break icon positioning when creating new items on the unsorted
+#    desktop and other icon positioning fixes" (in 6.7.4.2):
+#    - sourceRowsInserted: in unsorted mode, skip loadAndApplyPositionsConfig();
+#      the config reload + convertFolderModelData() model reset discarded the
+#      live manual arrangement (including any not-yet-saved moves) every time
+#      a file or folder was created on the desktop.
+#    - bootstrapUrl: look the source row up in m_sourceToProxy instead of
+#      blind-updateMaps(proxyRow, proxyRow), which could overwrite an existing
+#      mapping and steal/duplicate a proxy cell on cross-screen drops; extend
+#      the model with begin/endInsertRows when appending.
+#    The commit's extension of the rebuild-from-URL to unsorted mode is
+#    deliberately NOT ported; (1) owns that path instead.
+#
+# 3. Port Sonic-DE 0be5b29e92 "Positioner: Fix off by one when checking
+#    whether an item fits" (also KDE plasma-desktop 608c6ec49a, in 6.8.0.x):
+#    pos == perStripe is out of range; treating it as fitting mapped such an
+#    item onto the next stripe's first slot, displacing whatever sat there on
+#    every convertFolderModelData().
+
+diff --git a/containments/desktop/plugins/folder/positioner.cpp b/containments/desktop/plugins/folder/positioner.cpp
 --- a/containments/desktop/plugins/folder/positioner.cpp
 +++ b/containments/desktop/plugins/folder/positioner.cpp
-@@ -657,19 +657,11 @@
+@@ -312,19 +312,38 @@
+         return;
+     }
+     const int rowCount = m_folderModel->rowCount();
+-    int proxyRow = -1;
++    int sourceRow = -1;
+     for (int i = 0; i < rowCount; ++i) {
+         if (m_folderModel->data(m_folderModel->index(i, 0), FolderModel::UrlRole).toUrl() == url) {
+-            proxyRow = i;
++            sourceRow = i;
+             break;
+         }
+     }
+-    if (proxyRow < 0) {
++    if (sourceRow < 0) {
+         return;
+     }
+-    if (!m_proxyToSource.contains(proxyRow)) {
+-        updateMaps(proxyRow, proxyRow);
++
++    // Never create a second proxy cell for a source row that is already mapped.
++    int proxyRow = m_sourceToProxy.value(sourceRow, -1);
++    if (proxyRow < 0) {
++        proxyRow = firstFreeRow();
++        if (proxyRow == -1) {
++            proxyRow = lastRow() + 1;
++            const int oldRowCount = this->rowCount();
++            if (proxyRow >= oldRowCount) {
++                beginInsertRows(QModelIndex(), oldRowCount, proxyRow);
++                m_beginInsertRowsCalled = true;
++                updateMaps(proxyRow, sourceRow);
++                endInsertRows();
++                m_beginInsertRowsCalled = false;
++            } else {
++                updateMaps(proxyRow, sourceRow);
++            }
++        } else {
++            updateMaps(proxyRow, sourceRow);
++        }
+     }
++
+     if (!m_positions.contains(url.toString())) {
+         m_positions[url.toString()] = GridPosition{
+             .stripe = qMax(0, proxyRow / m_perStripe),
+@@ -657,19 +676,11 @@
  
  void Positioner::sourceModelReset()
  {
@@ -20,7 +96,20 @@
  }
  
  void Positioner::sourceRowsAboutToBeInserted(const QModelIndex &parent, int start, int end)
-@@ -898,77 +890,12 @@
+@@ -848,8 +859,10 @@
+     // Don't generate new positions data if we're waiting for listing to
+     // complete to apply initial positions.
+     if (!m_deferApplyPositions && screenInUse()) {
+-        // Load current config
+-        loadAndApplyPositionsConfig();
++        if (!m_enabled || m_folderModel->sortMode() != -1) {
++            // Load current config
++            loadAndApplyPositionsConfig();
++        }
+         // Update positions to append the missing items
+         updatePositionsList();
+         if (m_deferRestoreChangedPositions) {
+@@ -898,77 +911,12 @@
  {
      Q_UNUSED(parents)
  
@@ -99,3 +188,21 @@
      Q_EMIT layoutChanged(QList<QPersistentModelIndex>(), hint);
  }
  
+@@ -1088,7 +1036,7 @@
+ 
+     // Restore positions for items that still fit.
+     for (auto &&[name, gridPos] : std::as_const(m_positions).asKeyValueRange()) {
+-        if (gridPos.pos <= m_perStripe) {
++        if (gridPos.pos < m_perStripe) {
+             if (!sourceIndices.contains(name)) {
+                 continue;
+             }
+@@ -1108,7 +1056,7 @@
+ 
+     // Find new positions for items that didn't fit.
+     for (auto &&[name, gridPos] : std::as_const(m_positions).asKeyValueRange()) {
+-        if (gridPos.pos > m_perStripe) {
++        if (gridPos.pos >= m_perStripe) {
+             if (!sourceIndices.contains(name)) {
+                 continue;
+             }

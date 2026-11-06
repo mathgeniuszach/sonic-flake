@@ -40,8 +40,10 @@ in
     (pkgs.replaceVars ./wallpaper-paths.patch {
       wallpapers = "${pkgs.lib.getBin pkgs.kdePackages.breeze}/share/wallpapers";
     })
-    # restore upstream positioner layout-change/reset handling; the custom
-    # rebuild-from-URL mangles ~12 icon positions on every rename/delete
+    # positioner: restore upstream layout-change/reset handling (the custom
+    # rebuild-from-URL mangles ~12 icon positions on every rename/delete), and
+    # port Sonic-DE 44d3eda84c + 0be5b29e92 so creating files/folders on the
+    # unsorted desktop stops resetting the manual arrangement
     ./positioner-layout.patch
   ];
 
