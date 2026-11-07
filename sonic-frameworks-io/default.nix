@@ -17,6 +17,10 @@ mkSonicDerivation {
   # client then resolves nixpkgs' matching plugins instead.
   postFixup = ''
     rm -rf $out/lib/qt-6/plugins/kf6/kio
+    # the debug output's .build-id symlinks point into the stripped dir
+    find "$debug/lib/debug/.build-id" -type l 2>/dev/null | while IFS= read -r link; do
+      [ -e "$link" ] || rm -f "$link"
+    done
   '';
 
   buildDependencies = with pkgs; [
